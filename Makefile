@@ -138,6 +138,67 @@ rpm:
 	cp rpm/rpmbuild/RPMS/x86_64/ggupgrade-$(VERSION)*.rpm .
 	rm -r rpm
 
+#---------------------------------------------------------------------
+# Packaging targets with changelog options (deb)
+#---------------------------------------------------------------------
+
+GIT_VERSION		:= $(or $(shell git describe --tags 2>/dev/null | perl -pe 's/(.*)-([0-9]*)-(g[0-9a-f]*)/\1+dev.\2.\3/'),$(shell cat VERSION 2>/dev/null),0.0.0+dev)
+ifeq ($(GIT_VERSION),0.0.0+dev)
+$(warning GIT_VERSION could not be determined (no git tags, no VERSION file); falling back to 0.0.0+dev)
+endif
+
+# Metadata vars
+GPROOT			:= /opt/greengagedb
+PACKAGE_NAME	:= $(shell grep '^Package:' debian/control | head -1 | awk '{print $$2}')
+MAINTAINER		:= $(shell grep '^Maintainer:' debian/control | sed 's/Maintainer: //')
+DATE_RFC		:= $(shell date -R)
+DISTRO_CODENAME := $(shell lsb_release -sc 2>/dev/null)
+IS_RELEASE		:= $(if $(GIT_VERSION),$(if $(findstring +dev,$(GIT_VERSION)),no,yes))
+BUILD_TYPE		:= $(if $(filter yes,$(IS_RELEASE)),Release build,Development build)
+DEB_TOPDIR		?= $(CURDIR)/../deb-packages
+
+# Generate for Dockerfile where .git is absent
+VERSION :
+	@echo "Update $@"
+	@echo "$(GIT_VERSION)" > $@
+	@cat $@
+
+debian/changelog:
+	@echo "$(PACKAGE_NAME) ($(GIT_VERSION)) $(DISTRO_CODENAME); urgency=low" > $@
+	@echo "" >> $@
+	@echo "  * $(BUILD_TYPE)" >> $@
+	@echo "" >> $@
+	@echo " -- $(MAINTAINER)  $(DATE_RFC)" >> $@
+
+debian/install:
+	@echo "$(PACKAGE_NAME)/* /" > $@
+
+# Default packaging target
+pkg : pkg-info pkg-deb
+
+# Display package info
+pkg-info :
+	@echo "PACKAGE_NAME: $(PACKAGE_NAME)"
+	@echo "MAINTAINER: $(MAINTAINER)"
+	@echo "DATE_RFC: $(DATE_RFC)"
+	@echo "GIT_VERSION: $(GIT_VERSION)"
+	@echo "DISTRO_CODENAME: $(DISTRO_CODENAME)"
+	@echo "IS_RELEASE: $(IS_RELEASE)"
+	@echo "BUILD_TYPE: $(BUILD_TYPE)"
+
+# Build Debian package
+pkg-deb : debian/changelog debian/install
+	@GPROOT="$(GPROOT)" PACKAGE_NAME="$(PACKAGE_NAME)" debuild --preserve-env -us -uc -b
+	@mkdir -p $(DEB_TOPDIR)
+	@find $(CURDIR)/../ -maxdepth 1 -type f \( -name "*.deb" \
+											-o -name "*.ddeb" \
+											-o -name "*.build" \
+											-o -name "*.buildinfo" \
+											-o -name "*.changes" \) \
+											-exec mv -f {} $(DEB_TOPDIR)/ \;
+
+.PHONY: debian/changelog debian/install pkg pkg-info pkg-deb
+
 install:
 	@test $${GOPATH?Error GOPATH not set}
 	cp -f ggupgrade $(GOPATH)/bin/
